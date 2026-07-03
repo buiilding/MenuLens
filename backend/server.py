@@ -13,7 +13,12 @@ from pathlib import Path
 from pydantic import BaseModel
 from typing import List, Optional
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+try:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+except ImportError:
+    LlmChat = None
+    UserMessage = None
+    ImageContent = None
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -29,6 +34,7 @@ BRAVE_SEARCH_API_KEY = os.environ.get('BRAVE_SEARCH_API_KEY', '')
 # Config limits
 MAX_ITEMS = 25
 MAX_QUERIES_PER_ITEM = 3
+MAX_IMAGE_SEARCH_ATTEMPTS = 6
 MAX_UPLOAD_MB = 10
 ACCEPTED_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 
@@ -69,9 +75,10 @@ Rules:
 - Include at most 25 items.
 - confidence must be between 0 and 1.
 - search_queries must contain 3 concise image-search-friendly queries.
-- Prefer queries that produce useful dish images.
-- If restaurant_name is visible, make the first query: "<restaurant_name>" "<dish name>".
-- Otherwise make the first query: "<dish name>" food.
+- Prefer broad, generic dish image queries over exact restaurant/menu wording.
+- Do not include prices, serving counts, vegetarian markers, or menu abbreviations in queries.
+- If restaurant_name is visible, you may use it only as the third query.
+- Make the first query: "<dish name>" food.
 - Use detected cuisine in one query when possible.
 - Use visual keywords for ambiguous dishes.
 """
@@ -116,6 +123,55 @@ async def _call_llm(image_bytes: bytes, mime_type: str) -> dict:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
 
     b64 = base64.b64encode(image_bytes).decode('utf-8')
+
+    if LlmChat is None:
+        try:
+            from openai import AsyncOpenAI
+
+            client_openai = AsyncOpenAI(api_key=OPENAI_API_KEY)
+            raw_response = await asyncio.wait_for(
+                client_openai.responses.create(
+                    model="gpt-5.2",
+                    instructions=MENU_SYSTEM_PROMPT,
+                    input=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": "Extract every visible food and drink item from this menu photo and return strict JSON as instructed.",
+                                },
+                                {
+                                    "type": "input_image",
+                                    "image_url": f"data:{mime_type};base64,{b64}",
+                                },
+                            ],
+                        }
+                    ],
+                ),
+                timeout=90,
+            )
+            raw = raw_response.output_text
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="LLM request timed out")
+        except Exception as e:
+            logger.exception("OpenAI fallback call failed")
+            raise HTTPException(status_code=502, detail=f"LLM failure: {str(e)[:200]}")
+
+        if not raw or not isinstance(raw, str):
+            raise HTTPException(status_code=502, detail="Empty LLM response")
+
+        json_blob = _extract_json_block(raw)
+        try:
+            data = json.loads(json_blob)
+        except json.JSONDecodeError:
+            logger.error("Failed to parse LLM JSON. Raw: %s", raw[:500])
+            raise HTTPException(status_code=502, detail="LLM returned invalid JSON")
+
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=502, detail="LLM JSON not an object")
+        return data
+
     image_content = ImageContent(image_base64=b64)
 
     chat = LlmChat(
@@ -162,7 +218,7 @@ async def _brave_image_search(client_http: httpx.AsyncClient, query: str) -> Opt
         "Accept": "application/json",
         "X-Subscription-Token": BRAVE_SEARCH_API_KEY,
     }
-    params = {"q": query, "count": 5, "safesearch": "strict"}
+    params = {"q": query, "count": 10, "safesearch": "strict"}
     payload = None
     for attempt in range(2):
         try:
@@ -191,7 +247,7 @@ async def _brave_image_search(client_http: httpx.AsyncClient, query: str) -> Opt
     for res in results:
         props = res.get("properties") or {}
         thumb = res.get("thumbnail") or {}
-        img_url = props.get("url") or thumb.get("src")
+        img_url = thumb.get("src") or props.get("url")
         if not img_url:
             continue
         return {
@@ -220,16 +276,103 @@ async def _rate_limited_brave(client_http: httpx.AsyncClient, query: str) -> Opt
         return await _brave_image_search(client_http, query)
 
 
-async def _find_image_for_item(client_http: httpx.AsyncClient, item: MenuItem) -> MenuItem:
-    for q in item.search_queries[:MAX_QUERIES_PER_ITEM]:
-        if not q or not isinstance(q, str):
+def _dedupe_queries(queries: List[str]) -> List[str]:
+    seen = set()
+    out = []
+    for query in queries:
+        if not query or not isinstance(query, str):
             continue
+        normalized = re.sub(r"\s+", " ", query).strip()
+        key = normalized.casefold()
+        if not normalized or key in seen:
+            continue
+        seen.add(key)
+        out.append(normalized)
+    return out
+
+
+def _clean_dish_name_for_search(name: str) -> str:
+    cleaned = name.strip()
+    cleaned = re.sub(r"\([^)]*\)", " ", cleaned)
+    cleaned = re.sub(r"\b\d+\s*(?:pc|pcs|piece|pieces|nos|no)\b\.?", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:non-veg|vegetarian|veg|nv|v)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\$\s*\d+(?:\.\d{1,2})?", " ", cleaned)
+    cleaned = re.sub(r"\s*[-–—]\s*$", " ", cleaned)
+    cleaned = re.sub(r"\s*[-–—]\s*", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,-/")
+    return cleaned or name.strip()
+
+
+def _clean_cuisine_for_search(cuisine: Optional[str]) -> Optional[str]:
+    if not cuisine:
+        return None
+    cleaned = re.sub(r"\b(?:non-veg|vegetarian|veg|nv|v)\b", " ", cuisine, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,-/")
+    return cleaned or cuisine.strip()
+
+
+def _dish_name_variants(name: str) -> List[str]:
+    variants = [name]
+    lower = name.casefold()
+    if "idly" in lower:
+        variants.append(re.sub("idly", "idli", name, flags=re.IGNORECASE))
+    if "thatte idli" in lower or "thatte idly" in lower:
+        variants.append("thatte idli")
+    if "sambar" in lower and ("idli" in lower or "idly" in lower):
+        variants.append("sambar idli")
+    if "podi" in lower and ("idli" in lower or "idly" in lower):
+        variants.append("podi idli")
+    if "ghee" in lower and "podi" in lower:
+        variants.append("ghee podi")
+    return _dedupe_queries(variants)
+
+
+def _broad_image_queries(item: MenuItem, cuisine: Optional[str]) -> List[str]:
+    clean_name = _clean_dish_name_for_search(item.name)
+    clean_cuisine = _clean_cuisine_for_search(cuisine)
+    name_variants = _dish_name_variants(clean_name)
+    visual = " ".join(item.visual_keywords[:3])
+
+    queries = []
+    for variant in name_variants:
+        queries.append(f"{variant} food")
+    for variant in name_variants:
+        if clean_cuisine:
+            queries.append(f"{variant} {clean_cuisine} food")
+    for variant in name_variants:
+        queries.append(f"{variant} dish")
+    for variant in name_variants:
+        if visual:
+            queries.append(f"{variant} {visual} food")
+
+    if item.category and clean_cuisine:
+        queries.append(f"{item.category} {clean_cuisine} food")
+    elif item.category:
+        queries.append(f"{item.category} food")
+
+    return _dedupe_queries(queries)
+
+
+def _image_search_queries(item: MenuItem, cuisine: Optional[str]) -> List[str]:
+    llm_queries = _dedupe_queries(item.search_queries)
+    broad_queries = _broad_image_queries(item, cuisine)
+    return _dedupe_queries(broad_queries + llm_queries)[:MAX_IMAGE_SEARCH_ATTEMPTS]
+
+
+async def _find_image_for_item(
+    client_http: httpx.AsyncClient,
+    item: MenuItem,
+    cuisine: Optional[str],
+) -> MenuItem:
+    for q in _image_search_queries(item, cuisine):
         hit = await _rate_limited_brave(client_http, q)
         if hit:
+            logger.info("Image found for '%s' via query '%s'", item.name, q)
             item.image_url = hit["image_url"]
             item.image_source_url = hit["image_source_url"]
             item.image_source_name = hit["image_source_name"]
             return item
+    logger.info("No image found for '%s' after fallback queries", item.name)
     return item
 
 
@@ -327,7 +470,7 @@ async def analyze_menu(image: UploadFile = File(...)):
     # Serialized Brave lookups (Free plan = 1 QPS, enforced by _rate_limited_brave)
     async with httpx.AsyncClient() as http_client:
         for it in result.items:
-            await _find_image_for_item(http_client, it)
+            await _find_image_for_item(http_client, it, result.detected_cuisine)
 
     return result
 
