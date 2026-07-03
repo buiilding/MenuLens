@@ -1,19 +1,21 @@
-@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Manrope:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Manrope:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-    --parchment: #fdfbf7;
-    --parchment-2: #f7f2ea;
-    --card-bg: #ffffff;
-    --terracotta: #c84b31;
-    --terracotta-hover: #a83c25;
-    --ink: #2d2825;
-    --ink-soft: #766c65;
-    --line: #eae5df;
-    --success: #4a7c59;
+    --paper: #f8f3e9;
+    --paper-deep: #f1e9d9;
+    --card-bg: #fffdf8;
+    --accent: #a93e22;
+    --accent-hover: #8f3119;
+    --accent-blush: #f6e7de;
+    --ink: #221c15;
+    --ink-soft: #7c7060;
+    --line: #e6dcca;
+    --gold: #c2892b;
+    --success: #56714f;
     --error: #b91c1c;
 }
 
@@ -31,23 +33,28 @@ body {
         system-ui,
         -apple-system,
         sans-serif;
-    background-color: var(--parchment);
+    background-color: var(--paper);
     color: var(--ink);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 }
 
 .font-display {
-    font-family: "Playfair Display", ui-serif, Georgia, serif;
-    letter-spacing: -0.01em;
+    font-family: "Fraunces", ui-serif, Georgia, serif;
+    font-optical-sizing: auto;
+    letter-spacing: -0.015em;
 }
 
 .font-body {
     font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
 }
 
+.font-meta {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
 ::selection {
-    background: #c84b3130;
+    background: #a93e2230;
     color: var(--ink);
 }
 
