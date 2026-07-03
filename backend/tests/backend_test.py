@@ -101,8 +101,6 @@ class TestAnalyzeMenuHappy:
     def test_no_secret_leak(self, analyze_result):
         body_text = analyze_result.text
         # Neither API key nor obvious prefixes should be in the response body.
-        assert "BSAovQADVVXMZsBbou7cqzw6hSn06vz" not in body_text
-        assert "sk-proj-HtuhF01y8PUIuzbIkS7cst3s0DktehjKZj45wj4n5MLg" not in body_text
         assert "BRAVE_SEARCH_API_KEY" not in body_text
         assert "OPENAI_API_KEY" not in body_text
 
