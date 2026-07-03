@@ -1,0 +1,63 @@
+{
+  "summary": "First-iteration E2E test of MenuLens MVP. Backend contract, validation & LLM extraction all work. Frontend upload → loading → results → reset flow works end-to-end on desktop and mobile. One CRITICAL integration bug found: Brave Search API is on the Free plan (1 QPS), but the backend fires up to 6 concurrent lookups per menu → ~9/10 Brave calls return 429 → only ~1 in 10 dish cards actually shows an image (the rest show the 'No image found' placeholder). This defeats the primary product promise ('visual dish cards').",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/analyze-menu",
+        "issue": "Brave Search API returns 429 'Request rate limit exceeded for plan' (plan=Free, rate_limit=1 req/sec) for almost every item. Root cause: server.py uses asyncio.Semaphore(6) + asyncio.gather() to run Brave searches concurrently, which instantly exceeds the 1 QPS free-tier limit. Result: only 1/10 items got image_url in tests; 9/10 dish cards show 'No image found' placeholder in UI.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "/api/analyze-menu",
+        "issue": "text/plain and multipart with a plain .txt correctly returns 400 (good). However mime-only validation trusts client-supplied Content-Type — a JPEG-labeled file with non-image bytes would still reach the LLM. Consider magic-byte sniff for defense-in-depth (nice-to-have, not blocking)."
+      },
+      {
+        "endpoint": "/api/analyze-menu",
+        "issue": "When Brave returns 429 the server silently swallows the error (logged as WARNING) and returns image_url=null. A retry-with-backoff or a single retry after the failed batch would recover most images even on the free plan."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Menu → Dish Cards visual output",
+        "issue": "Because backend rarely returns image_url (Brave 429), the results view is dominated by the ImageOff placeholder ('No image found'). Users experience the product as broken. Fix belongs on the backend (see critical issue above); frontend fallback UI itself renders correctly.",
+        "affected_selectors": ["dish-image-placeholder-*", "dish-image-*"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Add real rate-limiting to Brave calls in backend/server.py — options: (a) reduce asyncio.Semaphore to 1 and add ~1.1s sleep between calls, (b) use a token-bucket / aiolimiter (1 req/sec), (c) on HTTP 429 automatically retry with exponential backoff (respecting Retry-After header). This is required for images to actually populate on dish cards.",
+    "Optional: log Retry-After from Brave 429 responses and expose an aggregate 'images_found' count in the API response for observability.",
+    "Optional: sniff first bytes of upload to validate real image content, not just declared Content-Type."
+  ],
+  "critical_code_review_comments": [
+    "server.py:295-302 — using Semaphore(6) for a 1-QPS third-party API is the direct cause of the image-miss problem. Concurrency must be tied to provider quota.",
+    "server.py:155-187 — no retry on 429; every failure becomes a permanent 'no image' for that dish.",
+    "server.py:275-277 — mime validation relies on client Content-Type header only; consider a magic-byte check (imghdr / Pillow verify).",
+    "server.py:24 — MongoDB client is instantiated but never used (per spec 'no persistence'). Safe but dead code; could be removed to reduce startup cost.",
+    "App.js:452-483 — handleFile is fine, but there is no user-facing indication when many images are missing (e.g., a subtle 'Some images couldn't be found' hint) — would help UX until backend fix ships."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py",
+    "/app/tests/fixtures/menu.jpg",
+    "/app/tests/fixtures/landscape.jpg",
+    "/app/tests/fixtures/big.jpg",
+    "/app/tests/fixtures/animated.gif"
+  ],
+  "success_rate": {"backend": "92% (12/13 pytest)", "frontend": "100% of tested flows"},
+  "test_credentials": "N/A (no auth in app)",
+  "seed_data_creation": "Synthetic but realistic Italian restaurant menu JPEG (900x1400, 10 dishes across 4 categories) generated with PIL and saved to /app/tests/fixtures/menu.jpg. Plain landscape (landscape.jpg), oversized 11.4MB JPEG (big.jpg), and animated.gif fixtures also created for validation tests.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend LLM extraction with GPT-5.2 works reliably (~14s for 10-item menu). Fixtures at /app/tests/fixtures/. Existing pytest suite at /app/backend/tests/backend_test.py covers health, happy path, mime/size validation, non-menu graceful handling, secret-leak check, and Brave image population (this last assertion currently fails and is the tracker for the rate-limit fix — after fix, it should pass with ≥50% images populated).",
+  "rca of the issue": "Reproduction: POST /api/analyze-menu with the fixture menu.jpg → backend calls _call_llm() which returns 10 items → items are passed into asyncio.gather() with Semaphore(6) each invoking _brave_image_search → Brave responds 429 with body '{plan:Free, rate_limit:1, rate_current:1}' for 27+ of ~30 calls in ~40ms. Only the 1-3 that landed in different seconds get results. Confirmed by /var/log/supervisor/backend.err.log showing 'Brave non-200 (429) ... Request rate limit exceeded for plan'. Mitigation: rate-limit to 1 req/s + retry on 429 (respect Retry-After)."
+}
