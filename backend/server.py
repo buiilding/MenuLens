@@ -153,7 +153,8 @@ async def _call_llm(image_bytes: bytes, mime_type: str) -> dict:
 
 
 async def _brave_image_search(client_http: httpx.AsyncClient, query: str) -> Optional[dict]:
-    """Return first usable image {image_url, image_source_url, image_source_name} or None."""
+    """Return first usable image {image_url, image_source_url, image_source_name} or None.
+    Retries once on 429 respecting Retry-After."""
     if not BRAVE_SEARCH_API_KEY:
         return None
     url = "https://api.search.brave.com/res/v1/images/search"
@@ -162,16 +163,30 @@ async def _brave_image_search(client_http: httpx.AsyncClient, query: str) -> Opt
         "X-Subscription-Token": BRAVE_SEARCH_API_KEY,
     }
     params = {"q": query, "count": 5, "safesearch": "strict"}
-    try:
-        r = await client_http.get(url, headers=headers, params=params, timeout=15)
-        if r.status_code != 200:
-            logger.warning("Brave non-200 (%s) for '%s': %s", r.status_code, query, r.text[:200])
+    payload = None
+    for attempt in range(2):
+        try:
+            r = await client_http.get(url, headers=headers, params=params, timeout=15)
+            if r.status_code == 429 and attempt == 0:
+                retry_after = 1.2
+                try:
+                    retry_after = float(r.headers.get("Retry-After", "1.2"))
+                except (TypeError, ValueError):
+                    pass
+                retry_after = max(0.5, min(retry_after, 3.0))
+                await asyncio.sleep(retry_after)
+                continue
+            if r.status_code != 200:
+                logger.warning("Brave non-200 (%s) for '%s': %s", r.status_code, query, r.text[:200])
+                return None
+            payload = r.json()
+            break
+        except Exception as e:
+            logger.warning("Brave error for '%s': %s", query, e)
             return None
-        payload = r.json()
-    except Exception as e:
-        logger.warning("Brave error for '%s': %s", query, e)
-        return None
 
+    if not payload:
+        return None
     results = payload.get("results") or []
     for res in results:
         props = res.get("properties") or {}
@@ -187,11 +202,29 @@ async def _brave_image_search(client_http: httpx.AsyncClient, query: str) -> Opt
     return None
 
 
+# Brave Free plan = 1 QPS. Global limiter serializes all outbound Brave calls.
+_brave_lock = asyncio.Lock()
+_brave_last_call_ts = 0.0
+_BRAVE_MIN_INTERVAL = 1.1  # seconds between calls
+
+
+async def _rate_limited_brave(client_http: httpx.AsyncClient, query: str) -> Optional[dict]:
+    global _brave_last_call_ts
+    async with _brave_lock:
+        loop = asyncio.get_event_loop()
+        now = loop.time()
+        wait = _BRAVE_MIN_INTERVAL - (now - _brave_last_call_ts)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _brave_last_call_ts = loop.time()
+        return await _brave_image_search(client_http, query)
+
+
 async def _find_image_for_item(client_http: httpx.AsyncClient, item: MenuItem) -> MenuItem:
     for q in item.search_queries[:MAX_QUERIES_PER_ITEM]:
         if not q or not isinstance(q, str):
             continue
-        hit = await _brave_image_search(client_http, q)
+        hit = await _rate_limited_brave(client_http, q)
         if hit:
             item.image_url = hit["image_url"]
             item.image_source_url = hit["image_source_url"]
@@ -291,15 +324,10 @@ async def analyze_menu(image: UploadFile = File(...)):
     if not result.items:
         raise HTTPException(status_code=422, detail="No menu items detected in the image.")
 
-    # Concurrent Brave lookups (bounded)
+    # Serialized Brave lookups (Free plan = 1 QPS, enforced by _rate_limited_brave)
     async with httpx.AsyncClient() as http_client:
-        sem = asyncio.Semaphore(6)
-
-        async def bounded(it: MenuItem):
-            async with sem:
-                return await _find_image_for_item(http_client, it)
-
-        result.items = await asyncio.gather(*(bounded(it) for it in result.items))
+        for it in result.items:
+            await _find_image_for_item(http_client, it)
 
     return result
 

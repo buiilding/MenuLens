@@ -90,9 +90,12 @@ class TestAnalyzeMenuHappy:
     def test_brave_images_populated(self, analyze_result):
         data = analyze_result.json()
         with_img = [i for i in data["items"] if i.get("image_url")]
-        # Most should have an image; allow some Brave misses but at least half.
-        assert len(with_img) >= max(1, len(data["items"]) // 2), (
-            f"Only {len(with_img)}/{len(data['items'])} items have images"
+        total = len(data["items"])
+        # After rate-limit fix: expect >=80% of items to have image_url populated.
+        assert total > 0
+        ratio = len(with_img) / total
+        assert ratio >= 0.8, (
+            f"Only {len(with_img)}/{total} items have images (ratio={ratio:.0%}), expected >=80%"
         )
 
     def test_no_secret_leak(self, analyze_result):
