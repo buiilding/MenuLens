@@ -1,0 +1,84 @@
+{
+  "project_context": {
+    "domain": "Restaurant / Food Utility App",
+    "theme": "LIGHT",
+    "archetype": "1 (Organic & Earthy)",
+    "vibe": "Warm, inviting, appetizing, sensory, high-contrast, clean utility"
+  },
+  "typography": {
+    "heading_font": "Playfair Display",
+    "body_font": "Manrope",
+    "rules": [
+      "Use Playfair Display for main titles and card dish names.",
+      "Use Manrope for descriptions, meta info, buttons, and form labels.",
+      "Headings should have tight tracking (tracking-tight).",
+      "Overlines/Categories on cards should be uppercase, tracking-[0.2em], text-xs."
+    ]
+  },
+  "color_palette": {
+    "background": "#FDFBF7",
+    "card_background": "#FFFFFF",
+    "primary_accent": "#C84B31",
+    "primary_accent_hover": "#A83C25",
+    "text_primary": "#2D2825",
+    "text_secondary": "#766C65",
+    "border_color": "#EAE5DF",
+    "success": "#4A7C59",
+    "error": "#B91C1C",
+    "rules": [
+      "Never use pure black or pure white except for card backgrounds.",
+      "The primary accent (Terracotta) should only be used for the main CTAs (Upload Button, Reset Button) and active states.",
+      "Background should feel like warm parchment or organic sand."
+    ]
+  },
+  "spacing_and_layout": {
+    "global": "Generous spacing. Main container should have p-4 on mobile and p-8 on desktop.",
+    "grid_strategy": "MODE B: THE CONTROL ROOM GRID (Adapted for Visuals). grid-cols-1 md:grid-cols-2 lg:grid-cols-3 or 4 for dish cards. Tightly packed (gap-4 or gap-6).",
+    "upload_state": "The empty/upload state should be a large dashed zone (border-2 border-dashed border-[#EAE5DF]) taking up most of the viewport, with a soft inner background (bg-white/50). Should include an appetizing icon/illustration, a clear 'Why it is empty' message, and a single primary 'Upload Menu' CTA.",
+    "mobile_first": "Images must not exceed 80vh on mobile. Ensure the upload area is easy to tap/drag on small screens."
+  },
+  "component_rules": {
+    "dish_cards": {
+      "style": "Neumorphism tactile variant but very subtle. Flat solid background, 1px delicate inner stroke (border-[#EAE5DF]), soft ambient shadow (shadow-sm), rounded-xl.",
+      "image": "Image takes up top 50-60% of the card, object-cover, rounded-t-xl.",
+      "content_padding": "p-4 or p-5.",
+      "hover_state": "Slight lift (-translate-y-1), shadow-md, border color darkens slightly."
+    },
+    "buttons": {
+      "style": "Pill-shaped (rounded-full).",
+      "primary": "bg-[#C84B31] text-white hover:bg-[#A83C25] font-medium.",
+      "secondary": "bg-transparent border border-[#EAE5DF] text-[#2D2825] hover:bg-stone-50."
+    },
+    "loading_state": {
+      "style": "Instead of a generic spinner, use a skeleton grid that pulses warmly (bg-stone-200), or a fun marquee/message (e.g., 'Analyzing culinary delights...')."
+    }
+  },
+  "motion_and_interactions": {
+    "transitions": "transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease",
+    "hover": "All interactive elements MUST have a clear hover state (lift or color shift).",
+    "loading": "Animate the skeleton screens with animate-pulse."
+  },
+  "icons_and_assets": {
+    "library": "lucide-react",
+    "usage": "Use icons sparingly. Good for the upload placeholder (Camera or Utensils icon) and error states."
+  },
+  "media_urls": {
+    "empty_state_texture": "https://images.unsplash.com/photo-1692521248559-c3434d0baa81?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwxfHxyZXN0YXVyYW50JTIwbWVudSUyMG1pbmltYWwlMjBmbGF0bGF5fGVufDB8fHx8MTc4MzExNjk3NXww&ixlib=rb-4.1.0&q=85",
+    "fallback_dish_1": "https://images.unsplash.com/photo-1516100882582-96c3a05fe590?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwxfHxkZWxpY2lvdXMlMjBwYXN0YSUyMGdvdXJtZXQlMjBwbGF0ZXxlbnwwfHx8fDE3ODMxMTY5NzZ8MA&ixlib=rb-4.1.0&q=85",
+    "fallback_dish_2": "https://images.unsplash.com/photo-1473093226795-af9932fe5856?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwyfHxkZWxpY2lvdXMlMjBwYXN0YSUyMGdvdXJtZXQlMjBwbGF0ZXxlbnwwfHx8fDE3ODMxMTY5NzZ8MA&ixlib=rb-4.1.0&q=85"
+  },
+  "accessibility_and_testing": {
+    "testing_attributes": "All interactive and key informational elements MUST include a data-testid attribute.",
+    "conventions": "kebab-case, role-based (e.g., data-testid='upload-area', data-testid='dish-card', data-testid='reset-button').",
+    "contrast": "Ensure text meets APCA standards. White text on Terracotta is highly readable."
+  },
+  "instructions_to_main_agent": [
+    "Use standard HTML/Tailwind for the layout, overriding Shadcn defaults to match the organic/earthy theme. Use .js and .jsx extensions for files.",
+    "Do NOT use 'Inter' font. Import Playfair Display and Manrope via Google Fonts in index.css.",
+    "Build the Upload view as the initial state, filling the viewport. When a user uploads an image, transition to a loading state, then to the results view.",
+    "The Results view should be a grid of Dish Cards. Each card must show the generated image, name, price, category, description, confidence score, and an external source link (if available).",
+    "Add a 'Scan Another Menu' reset button at the bottom or top of the Results view.",
+    "Ensure the entire app is mobile-responsive since it will be used at a restaurant table. Emphasize large tap targets and legible typography.",
+    "Include appropriate error states for invalid image uploads or API failures."
+  ]
+}
